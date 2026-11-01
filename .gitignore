@@ -3,28 +3,30 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual Environment
+# Virtual environments
 venv/
 env/
 ENV/
+.venv/
 
-# Environment Variables
+# Environment variables / secrets
 .env
+.env.*
+!.env.example
 
-# Uploads
+# Candidate uploads and local app data (sensitive)
 uploads/
 *.pdf
+backend/data/
 
 # Logs
 *.log
 
-# VS Code
+# IDE
 .vscode/
-
-# PyCharm
 .idea/
 
-# OS Files
+# OS
 .DS_Store
 Thumbs.db
 
@@ -45,11 +47,11 @@ htmlcov/
 *.db
 *.sqlite3
 
-# Node (for frontend later)
+# Node frontend (when added)
 node_modules/
 .next/
 out/
 
-# Misc
+# Temporary / backups
 *.tmp
 *.bak
