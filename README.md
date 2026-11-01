@@ -1,165 +1,152 @@
 # AI Hiring Copilot
 
-An early-stage, recruiter-assistance application for parsing resumes, understanding job descriptions, and producing explainable, evidence-backed candidate-to-role insights. The system is intended to support human reviewers; it must not make autonomous hiring or rejection decisions.
+An early-stage, recruiter-assistance application for parsing resumes, understanding job descriptions, and producing explainable, evidence-backed candidate-to-role insights. The system supports human review; it must not make autonomous hiring or rejection decisions.
 
-> **Project status:** Backend ingestion prototype. The repository currently contains a FastAPI backend and PDF text extraction. The frontend directory is empty. Resume-to-job matching, structured LLM extraction, persistence, reviewer workflows, evaluation, and deployment are roadmap items unless separately verified in code.
+> **Current project scope:** FastAPI backend with PDF ingestion, page-aware extraction, local persistence, tenant-scoped data queries, local document storage, and audit events. The frontend folder is currently empty. Structured LLM extraction, JD parsing, matching, skill-gap analysis, interview preparation, and learning plans remain planned work unless a later release report verifies them.
 
-## Current verified baseline
+## Verified engineering status
 
-| Capability | Status | Evidence |
+| Capability | Status | Evidence / limitation |
 |---|---|---|
-| Local Python environment | Set up | Windows, Python 3.12.10, `uv` |
-| FastAPI application startup | Tested | Uvicorn startup completed locally |
-| Swagger / OpenAPI | Tested | `/docs` and `/openapi.json` opened locally |
-| PDF upload endpoint | Tested | `POST /api/resume/upload` returned HTTP 200 |
-| PDF text extraction | Tested | Sample PDF extracted; response included page and character counts |
-| Batch 1 automated tests | Tested | User-reported Windows run: `14 passed in 1.31s` on 2026-11-01 |
-| Frontend | Missing | `frontend/` has no application files |
-| Database persistence | Not implemented / not verified | No verified persistence workflow yet |
-| Groq structured extraction | Not implemented / not verified | Dependency presence is not proof of provider integration |
-| JD parsing and resume-JD matching | Planned | Not verified in the current code |
-| Human review, audit trail, and deployment | Planned | Not verified |
+| Windows Python 3.12 + `uv` environment | Tested | Fresh environment reproduced in the Git-connected checkout |
+| FastAPI startup, Swagger, PDF upload | Tested | Local `POST /api/resume/upload` returned HTTP 200 |
+| Batch 1 PDF validation and page extraction | Tested | 14 Windows tests passed before Batch 2 |
+| Batch 2 database/storage implementation | Implemented in this patch | SQLite default, SQLAlchemy models, storage adapter, Alembic migration |
+| Batch 2 automated tests | Tested in isolated build environment | 27 tests passed; rerun on the target Windows checkout before merging |
+| PostgreSQL compatibility | Implemented, not integration-tested | SQLAlchemy + psycopg driver; no live PostgreSQL server test yet |
+| Tenant data scoping | Implemented with development headers | Headers are caller-controlled and are NOT production authentication |
+| OIDC/JWT authentication | Not implemented | Required before exposing service to users or the public internet |
+| Structured resume extraction / Gemini or Groq integration | Not implemented | Provider adapter and deterministic fake belong to Phase 2 |
+| JD parser / hybrid matching / skill gap engine | Planned | Not verified in current code |
+| Interview question and learning-plan generation | Planned | Not verified in current code |
+| Frontend | Missing | `frontend/` currently has no application files |
+| Production deployment / load testing | Not verified | Local API tests do not establish production readiness |
 
-Statuses describe the evidence available for this repository snapshot; update this table after each verified milestone.
+Update this table only when new execution evidence exists.
 
-## Repository layout
+## Architecture (current Phase 1)
 
-```text
-ai_hiring_copilot/
-├── README.md
-├── .gitignore
-├── requirements.txt
-├── backend/
-│   ├── app.py
-│   ├── .env.example
-│   ├── requirements.txt
-│   ├── requirements-dev.txt
-│   ├── routes/
-│   │   └── resume.py
-│   ├── services/
-│   │   └── pdf_extractor.py
-│   └── tests/
-│       ├── conftest.py
-│       └── test_pdf_extractor.py
-└── frontend/                 # currently empty; frontend is not implemented
+```mermaid
+flowchart TD
+    C[Local API client] --> API[FastAPI]
+    API --> ID[Development tenant/actor context]
+    ID --> UP[Resume upload and lifecycle routes]
+    UP --> VAL[Bounded PDF validation]
+    VAL --> EXT[Page-aware pypdf extraction]
+    EXT --> SVC[Resume ingestion service]
+    SVC --> FS[(Private local PDF storage)]
+    SVC --> DB[(SQLite local / PostgreSQL supported)]
+    DB --> P[Resume metadata and per-page text]
+    DB --> A[Audit events]
 ```
 
-## Local setup — Windows CMD
+The development identity uses `X-Tenant-ID` and `X-Actor-ID` UUID headers so tenant scoping can be tested locally. These headers can be forged by a caller. They are **not authentication**. The app defaults to a fail-closed production mode; copy `backend/.env.example` to `backend/.env` to explicitly enable local development identity. Integrate verified JWT/OIDC claims before deployment.
 
-The following commands assume the repository is located at `E:\ai_hiring_copilot-main`. Adjust the path if yours differs.
+## Windows CMD setup
+
+From the repository root:
 
 ```cmd
-cd /d E:\ai_hiring_copilot-main
+cd /d E:\ai_hiring_copilot_github_check
 uv venv --python 3.12 .venv
 .venv\Scripts\activate.bat
-uv pip install -r backend\requirements.txt
 uv pip install -r backend\requirements-dev.txt
 ```
 
-Run the API from the repository root:
+Create the local environment file:
+
+```cmd
+copy backend\.env.example backend\.env
+```
+
+The defaults use a local SQLite database and a private local storage folder. Ensure `backend\data\` is ignored by Git; it contains candidate data and the local database.
+
+## Database setup
+
+For local development, `AUTO_CREATE_DB=true` creates missing tables at application startup. For migration-based setup (recommended for staging/production), set `AUTO_CREATE_DB=false` and run from the repository root:
+
+```cmd
+alembic -c alembic.ini upgrade head
+```
+
+Default local database: `backend/data/ai_hiring_copilot.db`.
+
+To use PostgreSQL, configure a SQLAlchemy URL such as:
+
+```text
+postgresql+psycopg://USER:PASSWORD@HOST:5432/ai_hiring_copilot
+```
+
+The PostgreSQL driver is included, but a live PostgreSQL integration test has not yet been run. Store real credentials in `backend/.env` or a secret manager, never in Git.
+
+## Run the API
 
 ```cmd
 python -m uvicorn app:app --app-dir backend --reload
 ```
 
-Open the interactive API documentation:
+Open:
 
 - http://127.0.0.1:8000/docs
-- http://127.0.0.1:8000/openapi.json
+- http://127.0.0.1:8000/health
+- http://127.0.0.1:8000/ready
 
-Stop the local server with `CTRL+C`.
+Stop with `CTRL+C`.
+
+## Local API identity headers
+
+For local development only, use stable UUIDs in Swagger's header fields:
+
+```text
+X-Tenant-ID: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+X-Actor-ID: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+```
+
+These identifiers are test context, not verified user identity. Do not deploy this header scheme as authentication.
+
+## Current API
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/resume/upload` | Validate, extract, store PDF and persist metadata/page text |
+| GET | `/api/resume` | Tenant-scoped paginated metadata; no page text |
+| GET | `/api/resume/{resume_id}` | Tenant-scoped metadata only |
+| DELETE | `/api/resume/{resume_id}` | Retryable deletion of blob and database metadata |
+| GET | `/health` | Liveness check |
+| GET | `/ready` | Database `SELECT 1` and storage writability check |
+
+Upload accepts PDF only, with a default 5 MiB byte limit and 20-page limit. Duplicate PDF content within the same tenant is idempotent by SHA-256 checksum. The same PDF uploaded in another tenant is stored as a separate record.
+
+Successful upload response contains `resume_id`, processing status, duplicate flag, file size, page count, and character count. It does not return candidate text or original filename. Extracted page text is stored in the database for later evidence-grounded processing and must be protected as sensitive data.
 
 ## Tests
-
-With the virtual environment activated, run:
 
 ```cmd
 python -m pytest backend\tests -q
 ```
 
-The latest reported local Batch 1 test result is `14 passed in 1.31s` (2026-11-01). Re-run the suite after pulling or changing code; this historical result is not a guarantee that future changes pass.
+Batch 2 test suite covers PDF validation, page boundaries, persistence, duplicate uploads, tenant query scoping, metadata-only responses, storage deletion, retryable deletion failures, path traversal rejection, and health/readiness endpoints. Offline tests use generated synthetic PDFs and SQLite.
 
-## Current API
+## Data handling and security limitations
 
-### `POST /api/resume/upload`
+- Original PDF files are stored under `backend/data/resumes/<tenant-uuid>/<resume-uuid>.pdf` by default. The directory must remain private and excluded from Git.
+- Extracted page text is stored in the database and can contain personal information. Do not use real candidate resumes in tests or demos without authorization.
+- Audit events avoid storing raw filenames and resume text.
+- The local filesystem adapter validates storage keys and performs atomic writes. An S3 adapter, encryption-at-rest configuration, backup policy, and retention scheduler are not implemented yet.
+- Tenant scoping exists in application queries, but development UUID headers are spoofable. Verified authentication and role-based authorization are a release blocker for internet-facing deployment.
+- Deletion is a two-step, retryable workflow because a filesystem and SQL database do not share one atomic transaction. A storage failure leaves the record in `DELETION_PENDING` for retry.
+- Structured JSON logs, metrics/tracing, request-rate limits, malware scanning, and production secret management remain to be added.
+- The system must assist human reviewers only. It must not automatically hire or reject candidates, and it must not use protected attributes or inferred proxies in matching.
 
-Accepts a PDF as `multipart/form-data` using the `file` field. The current tested response returns processing metadata such as status, byte size, page count, and extracted character count. It does not need to return the full resume text to the caller.
+## Roadmap
 
-Use only synthetic or explicitly authorized, anonymized resumes in development and tests. Do not commit resumes, extracted personal data, API keys, `.env` files, virtual environments, or generated uploads to Git.
-
-## Target product capabilities
-
-The intended product is a resume intelligence and job-matching assistant with the following independently testable capabilities:
-
-1. **Secure document ingestion:** PDF/DOCX validation, file/page limits, safe storage, checksum, deletion, and tenant-scoped access.
-2. **Structured resume extraction:** skills, work history, projects, education, and certifications in validated schemas, with page/quote evidence and explicit unknown values.
-3. **Job description parsing:** required/preferred skills, responsibilities, experience, education, location, and employment details with source evidence.
-4. **Explainable matching:** transparent skill normalization and lexical/semantic matching; show matched, partially matched, missing-evidence, and unverified requirements.
-5. **Skill-gap analysis:** distinguish missing evidence from proof that a person lacks a skill; produce learning objectives and assessments.
-6. **Interview preparation:** role- and evidence-linked questions with difficulty levels and evaluation rubrics.
-7. **Personalized learning plans:** prerequisites, learning resources, practical exercises, projects, and measurable outcomes.
-8. **Human review:** reviewer notes, overrides, and audit history. No automatic hiring or rejection.
-9. **Evaluation and operations:** deterministic offline tests, labeled evaluation sets, security tests, CI, observability, deployment, and rollback documentation.
-
-## Proposed architecture direction
-
-Start with a modular FastAPI application rather than microservices. Add PostgreSQL for persistent application data, SQLAlchemy and Alembic for data access and migrations, and a storage adapter for original documents. Use provider interfaces for LLM and embedding services, with deterministic fakes for normal tests. Add lexical and dense retrieval only when the matching requirements and evaluation set justify them. Introduce LangGraph for workflows that genuinely need explicit state, validation, bounded retries, or controlled recovery.
-
-```mermaid
-flowchart TD
-    R[Resume PDF or DOCX] --> I[Secure Ingestion]
-    J[Job Description] --> P[JD Parser]
-    I --> X[Resume Extraction]
-    X --> S[Validated Profile with Page Evidence]
-    P --> Q[Structured Job Requirements]
-    S --> M[Explainable Matching]
-    Q --> M
-    M --> G[Skill Gap and Interview Preparation]
-    G --> H[Human Reviewer]
-    H --> D[(Persistent Data and Audit Trail)]
-    I --> O[(Private Document Storage)]
-    M --> E[Offline Evaluation]
-```
-
-This diagram is a target architecture, not a claim that all components are already implemented.
-
-## Responsible-use and privacy principles
-
-- The product assists human reviewers; it does not automatically hire or reject candidates.
-- Do not score, filter, or rank using protected attributes or inferred proxies.
-- Keep protected attributes out of model inputs and matching features.
-- Treat resume files, extracted text, and job descriptions as untrusted inputs.
-- Validate LLM outputs against strict schemas and verify evidence quotes against source pages.
-- Do not log raw resume text, candidate names, emails, phone numbers, or secrets.
-- Enforce tenant/actor authorization in backend data access, not only in the UI.
-- Define retention and deletion behavior for both stored files and derived data.
-- Use synthetic or explicitly authorized/anonymized data in tests and demos.
-- Do not claim that a small synthetic evaluation proves fairness or hiring validity.
-
-## Planned engineering phases
-
-| Phase | Deliverable | Status |
-|---|---|---|
-| 1 | Secure ingestion, page-aware extraction, storage, metadata, ownership, deletion, and tests | In progress |
-| 2 | Structured resume extraction with evidence and deterministic fake provider | Planned |
-| 3 | Evidence-backed job description parsing | Planned |
-| 4 | Explainable resume-JD matching and skill taxonomy | Planned |
-| 5 | Skill-gap analysis, interview preparation, and learning roadmap | Planned |
-| 6 | Human review, audit, evaluation, security, CI, and deployment hardening | Planned |
-| 7 | Frontend and end-to-end product integration | Planned; frontend directory currently empty |
-
-## Configuration and secrets
-
-`backend/.env.example` is a template location. Add only configuration variables that are actually consumed by the application. Keep real secrets in a local `.env` file or a secret manager; never commit them. Do not add a paid provider as a requirement for the offline test suite.
-
-## Limitations
-
-- Current verified functionality is limited to local FastAPI startup and PDF upload/text extraction.
-- No verified database-backed resume lifecycle is available yet.
-- No verified JD parser, matching engine, candidate ranking, skill-gap engine, or learning-resource retrieval is available yet.
-- The frontend is not implemented.
-- No production deployment, load test, or real-world hiring validity has been established.
+1. Complete and review Phase 1 secure ingestion acceptance on Windows and PostgreSQL.
+2. Phase 2: provider-neutral structured resume extraction with strict Pydantic schemas, deterministic fake provider, page/quote evidence verification, bounded retries, and version history.
+3. Phase 3: job-description parser with source evidence and prompt-injection boundaries.
+4. Phase 4: explainable lexical/semantic matching, skill taxonomy, uncertainty states, and human review.
+5. Phase 5: skill-gap analysis, interview questions with rubrics, and personalized learning plans.
+6. Evaluation, fairness-risk review, CI, containerization, deployment, runbook, and frontend.
 
 ## License
 
-No license is declared yet. Add one only after confirming the intended license and checking the usage rights of dependencies, models, and datasets.
+No license is declared. Add one only after confirming the intended license and all included dependencies, models, and datasets' usage rights.
